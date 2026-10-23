@@ -1,0 +1,990 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="Concilia: herramienta interna de EGCI para conciliar el extracto bancario con el reporte del sistema contable.">
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px/1.5 system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Concilia</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+<style>
+/* Layout: herramienta de una columna; cabecera con banco activo, carga de 2 archivos lado a lado, resumen en cifras, pestañas con tablas de libro mayor. */
+:root{
+  --bg:#f3f5f4; --surface:#ffffff; --sunk:#e8edeb; --line:#d3dbd8; --fg:#16211f; --muted:#5b6a66;
+  --accent:#0d5c55; --accent-fg:#ffffff; --accent-soft:#d9ebe8;
+  --ok:#1f7a3f; --ok-soft:#dcf0e2; --warn:#9a5b00; --warn-soft:#fbecd2; --bad:#b3261e; --bad-soft:#f9dedb; --info:#2c5aa0; --info-soft:#dde7f6;
+  --f-display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body:"Public Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono:"IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --r:8px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1514; --surface:#162020; --sunk:#1d2928; --line:#2c3a38; --fg:#e4ecea; --muted:#9aaba7;
+  --accent:#5fc2b6; --accent-fg:#06201d; --accent-soft:#163a36;
+  --ok:#6fd08e; --ok-soft:#173523; --warn:#f0b45a; --warn-soft:#3a2a10; --bad:#f2847b; --bad-soft:#3d1815; --info:#8db4ef; --info-soft:#18273f;
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1514; --surface:#162020; --sunk:#1d2928; --line:#2c3a38; --fg:#e4ecea; --muted:#9aaba7;
+  --accent:#5fc2b6; --accent-fg:#06201d; --accent-soft:#163a36;
+  --ok:#6fd08e; --ok-soft:#173523; --warn:#f0b45a; --warn-soft:#3a2a10; --bad:#f2847b; --bad-soft:#3d1815; --info:#8db4ef; --info-soft:#18273f;
+  color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:14px;line-height:1.5}
+.wrap{max-width:1180px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 120px;display:flex;flex-direction:column;gap:20px}
+h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance;letter-spacing:-.01em}
+h1{font-size:28px}
+h2{font-size:18px}
+h3{font-size:15px}
+.num,.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.small{font-size:12.5px}
+.eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
+button,select,input{font:inherit;color:inherit}
+button{cursor:pointer}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:var(--r);padding:7px 12px;font-weight:600}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.ghost{background:transparent}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.sm{padding:3px 9px;font-size:12.5px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+select,input[type=text],input[type=number]{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:6px 8px;min-width:0}
+header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px}
+.brand p{margin:4px 0 0;color:var(--muted);max-width:60ch}
+.bankbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.bankbar label{font-size:12.5px;color:var(--muted)}
+.banner{border:1px solid var(--line);background:var(--info-soft);border-radius:var(--r);padding:10px 14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.banner b{color:var(--info)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:760px){.grid2{grid-template-columns:1fr}}
+.drop{border:1.5px dashed var(--line);border-radius:var(--r);padding:14px;display:flex;flex-direction:column;gap:6px;background:var(--sunk);transition:border-color .15s}
+.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop .fname{font-weight:600;word-break:break-all}
+.maprow{display:grid;grid-template-columns:110px 1fr;gap:6px 10px;align-items:center}
+.maprow select{width:100%}
+.preview{overflow-x:auto;border:1px solid var(--line);border-radius:6px}
+.preview table{font-size:12px}
+.controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+@media (max-width:900px){.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:2px;text-align:left;border-top:4px solid var(--c,var(--line))}
+.tile .big{font-family:var(--f-display);font-size:28px;font-weight:700;line-height:1.1}
+.tile.sel{outline:2px solid var(--c)}
+.t-ok{--c:var(--ok)} .t-warn{--c:var(--warn)} .t-bad{--c:var(--bad)} .t-info{--c:var(--info)} .t-acc{--c:var(--accent)}
+.statement{display:grid;grid-template-columns:repeat(3,auto);justify-content:start;gap:4px 28px}
+.tabs{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line)}
+.tab{border:0;background:transparent;padding:8px 12px;border-bottom:3px solid transparent;font-weight:600;color:var(--muted);white-space:nowrap}
+.tab[aria-selected=true]{color:var(--fg);border-color:var(--accent)}
+.tab .cnt{font-family:var(--f-mono);font-size:12px;background:var(--sunk);border-radius:10px;padding:1px 7px;margin-left:4px}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%}
+th,td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;white-space:nowrap}
+th{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);background:var(--sunk);position:sticky;top:0}
+td.r,th.r{text-align:right}
+td.desc{white-space:normal;min-width:180px;max-width:320px;color:var(--muted)}
+tr:hover td{background:color-mix(in srgb,var(--accent-soft) 40%,transparent)}
+tr.picked td{background:var(--accent-soft)}
+.pill{display:inline-block;border-radius:20px;padding:1px 8px;font-size:11.5px;font-weight:600;background:var(--sunk);color:var(--muted)}
+.p-ok{background:var(--ok-soft);color:var(--ok)} .p-warn{background:var(--warn-soft);color:var(--warn)} .p-bad{background:var(--bad-soft);color:var(--bad)} .p-info{background:var(--info-soft);color:var(--info)}
+.cmt{width:180px}
+.tabletools{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+.pager{display:flex;gap:6px;align-items:center}
+.selbar{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:2px solid var(--accent);padding:10px max(16px,env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;justify-content:center;z-index:20;box-shadow:0 -6px 20px rgba(0,0,0,.12)}
+.sugg{display:flex;flex-direction:column;gap:8px}
+.scard{border:1px solid var(--line);border-left:4px solid var(--c,var(--info));border-radius:8px;padding:10px 12px;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;background:var(--surface)}
+.scard .items{font-size:12.5px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.scard .acts{display:flex;gap:6px}
+.notice{font-size:12.5px;color:var(--muted)}
+.err{color:var(--bad);font-weight:600}
+details>summary{cursor:pointer;font-weight:600}
+.banks{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+.bankcard{border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between;gap:8px;align-items:center;background:var(--surface)}
+.empty{padding:28px;text-align:center;color:var(--muted)}
+.confirm{color:var(--warn);font-weight:600}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div class="eyebrow">EGCI · Herramienta interna</div>
+      <h1>Concilia</h1>
+      <p>Compara el extracto del banco con el reporte del sistema: empareja por referencia y fecha, y separa lo que no cuadra.</p>
+    </div>
+    <div class="bankbar">
+      <label for="bankSel">Banco</label>
+      <select id="bankSel"></select>
+      <button class="btn sm" id="addBankBtn" type="button">+ Agregar banco</button>
+      <span id="addBankForm" hidden>
+        <input type="text" id="newBankName" placeholder="Nombre del banco" maxlength="60">
+        <button class="btn sm primary" id="saveBankBtn" type="button">Guardar</button>
+        <button class="btn sm ghost" id="cancelBankBtn" type="button">Cancelar</button>
+      </span>
+      <label for="mes">Mes</label>
+      <select id="mes"></select>
+      <button class="btn sm primary" id="newBtn" type="button">Nueva conciliación</button>
+      <button class="btn sm" id="histBtn" type="button" aria-expanded="false" aria-controls="histPanel">Historial</button>
+      <span id="newMsg" class="small confirm" style="flex-basis:100%;text-align:right"></span>
+    </div>
+  </header>
+
+  <section class="panel" id="histPanel" hidden aria-label="Historial">
+    <div class="tabletools"><h2>Historial de conciliaciones</h2><span class="controls"><label for="histMes" class="small muted">Mes</label><select id="histMes"></select><label for="histBank" class="small muted">Banco</label><select id="histBank"></select><button class="btn sm ghost" id="histClose" type="button">Cerrar</button></span></div>
+    <p class="notice" style="margin:0">Cada conciliación se registra al descargar su Excel. Solo se guardan conteos y totales, no los movimientos.</p>
+    <div id="histStatus" style="display:flex;flex-direction:column;gap:8px"></div>
+    <div id="histBody"></div>
+  </section>
+
+  <div class="banner" id="exampleBanner">
+    <span><b>Datos de ejemplo.</b> Lo que ves es una conciliación de prueba con movimientos inventados. Sube tus dos archivos para empezar.</span>
+  </div>
+
+  <section class="grid2" aria-label="Archivos">
+    <div class="panel" data-side="banco">
+      <div class="eyebrow">1 · Extracto del banco</div>
+      <label class="drop" id="drop-banco">
+        <span class="fname" id="fname-banco">Arrastra aquí el Excel del banco o haz clic</span>
+        <span class="muted small" id="finfo-banco">.xlsx, .xls o .csv</span>
+        <input type="file" id="file-banco" accept=".xlsx,.xls,.csv" hidden>
+      </label>
+      <details id="map-banco-wrap"><summary>Columnas detectadas</summary><div id="map-banco"></div></details>
+    </div>
+    <div class="panel" data-side="sistema">
+      <div class="eyebrow">2 · Reporte del sistema contable</div>
+      <label class="drop" id="drop-sistema">
+        <span class="fname" id="fname-sistema">Arrastra aquí el Excel del sistema o haz clic</span>
+        <span class="muted small" id="finfo-sistema">.xlsx, .xls o .csv</span>
+        <input type="file" id="file-sistema" accept=".xlsx,.xls,.csv" hidden>
+      </label>
+      <details id="map-sistema-wrap"><summary>Columnas detectadas</summary><div id="map-sistema"></div></details>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="Reglas">
+    <div class="controls">
+      <label for="tol">Tolerancia de fecha: ±</label>
+      <input type="number" id="tol" min="0" max="31" value="4" style="width:64px">
+      <span>días</span>
+      <label for="dateOrder" style="margin-left:8px">Fechas escritas como</label>
+      <select id="dateOrder"><option value="dmy">día/mes/año</option><option value="mdy">mes/día/año</option></select>
+      <label style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" id="soloMes"> Conciliar solo los movimientos del mes elegido</label>
+      <button class="btn primary" id="runBtn" type="button">Conciliar</button>
+      <span id="runMsg" class="small"></span>
+    </div>
+    <div class="notice">Regla: misma referencia y fechas con hasta ±<span id="tolTxt">4</span> días de diferencia. Si el monto no coincide, se marca como diferencia de monto. Si un movimiento del banco corresponde a varios del sistema con la misma referencia (o al revés), se concilia como agrupado cuando la suma coincide. Los movimientos se procesan en tu navegador y no se guardan.</div>
+  </section>
+
+  <section id="results" hidden>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="tiles" id="tiles"></div>
+      <div class="panel">
+        <div class="statement" id="statement"></div>
+        <div class="controls">
+          <button class="btn primary" id="exportBtn" type="button">Descargar Excel</button>
+          <span id="exportMsg" class="small"></span>
+        </div>
+      </div>
+      <div>
+        <div class="tabs" role="tablist" id="tabs"></div>
+        <div class="tabletools" style="padding:10px 0">
+          <input type="text" id="filter" placeholder="Buscar por referencia, monto o descripción" style="flex:1;max-width:380px">
+          <div class="pager" id="pager"></div>
+        </div>
+        <div id="tabBody"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="Bancos">
+    <details id="banksPanel">
+      <summary>Bancos y última conciliación</summary>
+      <p class="notice">Cada banco guarda el formato de columnas de sus archivos, para no configurarlo cada mes. Al descargar el Excel se registra un resumen (conteos y totales, sin movimientos).</p>
+      <div class="banks" id="banksList"></div>
+    </details>
+  </section>
+</div>
+
+<div class="selbar" id="selbar" hidden>
+  <span id="selInfo"></span>
+  <button class="btn primary sm" id="pairBtn" type="button">Emparejar seleccionados</button>
+  <button class="btn sm" id="clearSelBtn" type="button">Quitar selección</button>
+</div>
+
+<script>
+/*ENGINE START*/
+const DAY = 86400000;
+function excelSerialToDay(n){ return Math.floor(n) - 25569; }
+function ymdToDay(y,m,d){
+  if(y<100) y += 2000;
+  if(m<1||m>12||d<1||d>31) return null;
+  const t = Date.UTC(y,m-1,d);
+  const dt = new Date(t);
+  if(dt.getUTCDate()!==d) return null;
+  return Math.floor(t/DAY);
+}
+function parseDate(v, order){
+  if(v===null||v===undefined||v==='') return null;
+  if(typeof v==='number'){ return (v>20000 && v<80000) ? excelSerialToDay(v) : null; }
+  if(v instanceof Date){ return ymdToDay(v.getFullYear(), v.getMonth()+1, v.getDate()); }
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+  if(m) return ymdToDay(+m[1],+m[2],+m[3]);
+  m = s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})/);
+  if(m){
+    let a=+m[1], b=+m[2], y=+m[3];
+    if(order==='mdy' && a<=12) return ymdToDay(y,a,b);
+    if(b>12 && a<=12) return ymdToDay(y,a,b);
+    return ymdToDay(y,b,a);
+  }
+  if(/^\d+(\.\d+)?$/.test(s)){ const n=+s; if(n>20000&&n<80000) return excelSerialToDay(n); }
+  return null;
+}
+function parseAmount(v){
+  if(v===null||v===undefined||v==='') return null;
+  if(typeof v==='number') return isFinite(v) ? Math.round(v*100) : null;
+  let s = String(v).trim();
+  if(!s) return null;
+  let neg = false;
+  if(/^\(.*\)$/.test(s)){ neg = true; s = s.slice(1,-1); }
+  if(/-\s*$/.test(s) || /^\s*-/.test(s) || /^[A-Za-z$\s.]*-/.test(s)) neg = true;
+  s = s.replace(/[^\d.,]/g,'');
+  if(!s) return null;
+  const lc = s.lastIndexOf(','), ld = s.lastIndexOf('.');
+  if(lc>=0 && ld>=0){
+    if(lc>ld) s = s.replace(/\./g,'').replace(',', '.');
+    else s = s.replace(/,/g,'');
+  } else if(lc>=0){
+    const parts = s.split(',');
+    if(parts.length>2 || parts[1].length===3) s = s.replace(/,/g,'');
+    else s = s.replace(',', '.');
+  } else if(ld>=0){
+    const parts = s.split('.');
+    if(parts.length>2 || parts[1].length===3) s = s.replace(/\./g,'');
+  }
+  const n = parseFloat(s);
+  if(!isFinite(n)) return null;
+  return Math.round(n*100) * (neg?-1:1);
+}
+function normRef(v){
+  if(v===null||v===undefined) return '';
+  let s = (typeof v==='number') ? String(Math.round(v)) : String(v);
+  s = s.toUpperCase().replace(/[^A-Z0-9]/g,'').replace(/^0+(?=.)/,'');
+  if(s==='0') return '';
+  return s;
+}
+const FIELD_RX = {
+  fecha:[/^fecha$/i,/fecha/i,/date/i],
+  ref:[/referencia/i,/^ref/i,/n[°ºro.\s]*\s*(de\s*)?(doc|documento|cheque|transacci|operaci|comprobante)/i,/documento/i,/comprobante/i,/cheque/i,/transacci/i,/n[uú]mero/i,/^nro/i],
+  debito:[/d[eé]bito/i,/cargo/i,/retiro/i,/egreso/i,/^debe$/i],
+  credito:[/cr[eé]dito/i,/abono/i,/dep[oó]sito/i,/ingreso/i,/^haber$/i],
+  monto:[/^(?!.*fecha).*monto/i,/^(?!.*fecha).*importe/i,/^(?!.*fecha).*valor/i,/amount/i,/^total$/i],
+  desc:[/descrip/i,/concepto/i,/glosa/i,/detalle/i,/observ/i]
+};
+const KEY_RX = /fecha|date|ref|doc|comprob|cheque|monto|importe|valor|d[eé]bito|cr[eé]dito|cargo|abono|descrip|concepto|glosa|detalle|saldo|haber|debe/i;
+function detectHeader(aoa){
+  let best=-1, bestScore=1;
+  for(let i=0;i<Math.min(aoa.length,25);i++){
+    const row = aoa[i]||[];
+    const score = row.filter(c=>typeof c==='string' && KEY_RX.test(c)).length;
+    if(score>bestScore){ best=i; bestScore=score; }
+  }
+  if(best<0){ best = aoa.findIndex(r=>(r||[]).filter(c=>c!==''&&c!=null).length>=2); if(best<0) best=0; }
+  return best;
+}
+function headerNames(row, width){
+  const out=[]; const seen={};
+  for(let i=0;i<width;i++){
+    let h = row && row[i]!=null && String(row[i]).trim()!=='' ? String(row[i]).trim() : 'Columna '+(i+1);
+    if(seen[h]){ seen[h]++; h = h+' ('+seen[h]+')'; } else seen[h]=1;
+    out.push(h);
+  }
+  return out;
+}
+function autoMap(headers){
+  const used=new Set(); const m={fecha:-1,ref:-1,monto:-1,debito:-1,credito:-1,desc:-1};
+  for(const f of ['fecha','ref','debito','credito','monto','desc']){
+    for(const rx of FIELD_RX[f]){
+      const i = headers.findIndex((h,ix)=>!used.has(ix) && rx.test(h) && !/saldo/i.test(h));
+      if(i>=0){ m[f]=i; used.add(i); break; }
+    }
+  }
+  m.modo = (m.monto<0 && m.debito>=0 && m.credito>=0) ? 'dc' : 'monto';
+  return m;
+}
+function mapComplete(m){ return m && m.fecha>=0 && m.ref>=0 && (m.modo==='dc' ? (m.debito>=0||m.credito>=0) : m.monto>=0); }
+function buildTx(side, rows, map, headerRow, order){
+  const out=[]; let skipped=0;
+  const L = side==='banco'?'B':'S';
+  rows.forEach((row,i)=>{
+    row = row||[];
+    const d = parseDate(row[map.fecha], order);
+    let v;
+    if(map.modo==='dc'){
+      const deb = map.debito>=0 ? parseAmount(row[map.debito]) : null;
+      const cre = map.credito>=0 ? parseAmount(row[map.credito]) : null;
+      v = (deb===null && cre===null) ? null : (cre||0) - Math.abs(deb||0);
+    } else v = parseAmount(row[map.monto]);
+    const text = row.join(' ');
+    if(v===null || v===0){ if(row.some(c=>c!==''&&c!=null)) skipped++; return; }
+    if(d===null && (/total|saldo/i.test(text) || !row[map.ref])){ skipped++; return; }
+    const refRaw = row[map.ref]==null ? '' : String(row[map.ref]).trim();
+    out.push({id:L+(i+1), side, fila: headerRow+2+i, d, ref: refRaw, r: normRef(row[map.ref]), v, a: Math.abs(v),
+      desc: map.desc>=0 && row[map.desc]!=null ? String(row[map.desc]).trim() : '', g:null, nota:'', revisado:false, comentario:''});
+  });
+  return {tx:out, skipped};
+}
+function subsetSum(target, items, maxSize, budget){
+  // items: array of tx; finds subset (size>=2) whose a sums to target
+  const arr = items.slice().sort((x,y)=>y.a-x.a);
+  let steps=0; const pick=[];
+  function rec(start, rem){
+    if(rem===0) return pick.length>=2;
+    if(pick.length>=maxSize || ++steps>budget) return false;
+    for(let i=start;i<arr.length;i++){
+      if(arr[i].a>rem) continue;
+      pick.push(arr[i]);
+      if(rec(i+1, rem-arr[i].a)) return true;
+      pick.pop();
+      if(steps>budget) return false;
+    }
+    return false;
+  }
+  return rec(0,target) ? pick.slice() : null;
+}
+function conciliar(B, S, tol){
+  const groups=[]; let gid=0;
+  const mk=(tipo,b,s,origen)=>{ const g={id:'G'+(++gid),tipo,origen:origen||'auto',b,s,revisado:false,comentario:''}; b.concat(s).forEach(t=>t.g=g.id); groups.push(g); return g; };
+  [...B,...S].forEach(t=>{t.g=null;t.nota='';});
+  const within=(x,y)=>x.d!==null && y.d!==null && Math.abs(x.d-y.d)<=tol;
+  const byRef=new Map();
+  for(const t of B){ if(!t.r) continue; if(!byRef.has(t.r)) byRef.set(t.r,{B:[],S:[]}); byRef.get(t.r).B.push(t); }
+  for(const t of S){ if(!t.r) continue; if(byRef.has(t.r)) byRef.get(t.r).S.push(t); }
+  for(const [,grp] of byRef){
+    if(!grp.S.length) continue;
+    const bs = grp.B.slice().sort((x,y)=>(x.d??0)-(y.d??0));
+    const free = x=>x.g===null;
+    // 1) exacto: mismo monto, fecha más cercana
+    for(const b of bs){
+      let best=null, bd=1e9;
+      for(const s of grp.S){ if(!free(s)||s.a!==b.a||!within(b,s)) continue; const dd=Math.abs(b.d-s.d); if(dd<bd){bd=dd;best=s;} }
+      if(best) mk('exacto',[b],[best]);
+    }
+    // 2) uno a muchos (1 banco -> varios sistema)
+    for(const b of bs){ if(!free(b)) continue;
+      const c = grp.S.filter(s=>free(s)&&within(b,s));
+      if(c.length>=2){ const sub = subsetSum(b.a, c, 12, 40000); if(sub) mk('agrupado',[b],sub); }
+    }
+    // 3) muchos a uno (varios banco -> 1 sistema)
+    for(const s of grp.S){ if(!free(s)) continue;
+      const c = grp.B.filter(b=>free(b)&&within(b,s));
+      if(c.length>=2){ const sub = subsetSum(s.a, c, 12, 40000); if(sub) mk('agrupado',sub,[s]); }
+    }
+    // 4) diferencia de monto: pareja única
+    for(const b of bs){ if(!free(b)) continue;
+      const c = grp.S.filter(s=>free(s)&&within(b,s));
+      if(c.length===1){
+        const back = grp.B.filter(x=>free(x)&&within(x,c[0]));
+        if(back.length===1) mk('diferencia',[b],[c[0]]);
+      }
+    }
+  }
+  // notas para pendientes
+  const refsB=new Map(), refsS=new Map();
+  B.forEach(t=>{ if(t.r) refsB.set(t.r,(refsB.get(t.r)||[]).concat(t)); });
+  S.forEach(t=>{ if(t.r) refsS.set(t.r,(refsS.get(t.r)||[]).concat(t)); });
+  const note=(t,own,other)=>{
+    if(t.g) return;
+    if(t.d===null){ t.nota='Fecha no legible'; return; }
+    if(!t.r){ t.nota='Sin referencia'; return; }
+    const o=(other.get(t.r)||[]);
+    const ofree=o.filter(x=>x.g===null);
+    if(ofree.length && ofree.every(x=>x.d!==null && Math.abs(x.d-t.d)>tol)){
+      const dd=Math.min(...ofree.map(x=>Math.abs(x.d-t.d))); t.nota='Referencia encontrada a '+dd+' días'; return; }
+    if(ofree.length>1 || (own.get(t.r)||[]).filter(x=>x.g===null).length>1){ t.nota='Referencia duplicada, revisar'; return; }
+    if(o.length && !ofree.length){ t.nota='Su referencia ya está conciliada'; return; }
+  };
+  B.forEach(t=>note(t,refsB,refsS)); S.forEach(t=>note(t,refsS,refsB));
+  return groups;
+}
+function localSuggestions(B, S, tol){
+  const pb=B.filter(t=>t.g===null && t.d!==null), ps=S.filter(t=>t.g===null && t.d!==null);
+  const out=[]; const usedB=new Set(), usedS=new Set();
+  const near=(x,y)=>Math.abs(x.d-y.d)<=tol;
+  // mismo monto, fecha cercana, referencia distinta
+  for(const b of pb){
+    let best=null, bd=1e9;
+    for(const s of ps){ if(usedS.has(s.id)||s.a!==b.a||!near(b,s)) continue; const dd=Math.abs(b.d-s.d); if(dd<bd){bd=dd;best=s;} }
+    if(best){ usedB.add(b.id); usedS.add(best.id); out.push({tipo:'monto',b:[b.id],s:[best.id],motivo:'Mismo monto'+(bd?' y fecha a '+bd+' día'+(bd>1?'s':''):' y misma fecha')+'; la referencia es distinta ('+(b.ref||'vacía')+' / '+(best.ref||'vacía')+').'}); }
+  }
+  // suma de varios del sistema = 1 banco
+  for(const b of pb){ if(usedB.has(b.id)) continue;
+    const c=ps.filter(s=>!usedS.has(s.id)&&near(b,s)&&s.a<b.a).sort((x,y)=>Math.abs(x.d-b.d)-Math.abs(y.d-b.d)).slice(0,22);
+    if(c.length<2) continue;
+    const sub=subsetSum(b.a,c,6,6000);
+    if(sub){ usedB.add(b.id); sub.forEach(s=>usedS.add(s.id)); out.push({tipo:'suma',b:[b.id],s:sub.map(s=>s.id),motivo:'La suma de '+sub.length+' movimientos del sistema da exactamente el monto del banco.'}); }
+  }
+  for(const s of ps){ if(usedS.has(s.id)) continue;
+    const c=pb.filter(b=>!usedB.has(b.id)&&near(b,s)&&b.a<s.a).sort((x,y)=>Math.abs(x.d-s.d)-Math.abs(y.d-s.d)).slice(0,22);
+    if(c.length<2) continue;
+    const sub=subsetSum(s.a,c,6,6000);
+    if(sub){ usedS.add(s.id); sub.forEach(b=>usedB.add(b.id)); out.push({tipo:'suma',b:sub.map(b=>b.id),s:[s.id],motivo:'La suma de '+sub.length+' movimientos del banco da exactamente el monto del sistema.'}); }
+  }
+  return out;
+}
+/*ENGINE END*/
+
+/* ---------- Datos de ejemplo (inventados) ---------- */
+function exampleData(){
+  let seed=7; const rnd=()=>{seed=(seed*16807)%2147483647; return seed/2147483647;};
+  const base = Math.floor(Date.UTC(2026,8,1)/DAY);
+  const dstr = d=>{const t=new Date(d*DAY); return String(t.getUTCDate()).padStart(2,'0')+'/'+String(t.getUTCMonth()+1).padStart(2,'0')+'/'+t.getUTCFullYear();};
+  const bank=[["BANCO DE EJEMPLO S.A. — Extracto de cuenta corriente"],["Cuenta: 1-000000 (ejemplo)"],[],["Fecha","Descripción","Nro. Documento","Débito","Crédito","Saldo"]];
+  const sys=[["Fecha","Comprobante","Glosa","Referencia","Monto"]];
+  const clientes=['Inscripción curso soldadura','Pago curso seguridad industrial','Matrícula diplomado','Cuota capacitación','Pago taller mantenimiento'];
+  const prov=['Pago proveedor material didáctico','Servicio de limpieza','Alquiler de aula','Pago honorarios instructor'];
+  let saldo=150000, comp=1200;
+  const push=(d,desc,ref,v,sd,sref,sv,sdesc)=>{
+    if(d!==null){ saldo+=v; bank.push([dstr(base+d),desc,ref,v<0?(-v).toFixed(2):'',v>0?v.toFixed(2):'',saldo.toFixed(2)]); }
+    if(sd!==null) sys.push([dstr(base+sd),'CB-'+(comp++),sdesc||desc,sref,sv.toFixed(2)]);
+  };
+  for(let i=0;i<34;i++){
+    const d=Math.floor(i*0.85)+1, inc=rnd()<0.62;
+    const v= inc ? Math.round(300+rnd()*4200) : -Math.round(200+rnd()*3800);
+    const ref = String(40000+Math.floor(rnd()*59999));
+    const shift = Math.floor(rnd()*3);
+    const desc = inc ? clientes[i%clientes.length] : prov[i%prov.length];
+    if(i===5){ push(d,desc,ref,v,d+1,ref,v+(v>0?-35:35)); continue; }
+    if(i===17){ push(d,desc,ref,v,d+2,ref,v-12.5); continue; }
+    push(d,desc,ref,v,d+shift,ref,v);
+  }
+  // depósito agrupado con la misma referencia (1 banco -> 3 sistema)
+  saldo+=4500; bank.push([dstr(base+12),'Depósito cobranza curso grupal','77120','', '4500.00',saldo.toFixed(2)]);
+  sys.push([dstr(base+11),'CB-'+(comp++),'Factura 311 curso grupal','77120','1500.00']);
+  sys.push([dstr(base+11),'CB-'+(comp++),'Factura 312 curso grupal','77120','1800.00']);
+  sys.push([dstr(base+12),'CB-'+(comp++),'Factura 313 curso grupal','77120','1200.00']);
+  // depósito cuyas facturas tienen referencias propias (sugerencia por suma)
+  saldo+=2750; bank.push([dstr(base+18),'Depósito efectivo ventanilla','90031','','2750.00',saldo.toFixed(2)]);
+  sys.push([dstr(base+17),'CB-'+(comp++),'Factura 330','F-330','1250.00']);
+  sys.push([dstr(base+18),'CB-'+(comp++),'Factura 331','F-331','1500.00']);
+  // referencia escrita distinto (sugerencia por monto)
+  saldo+=980; bank.push([dstr(base+20),'Transferencia recibida','TRF-00123','','980.00',saldo.toFixed(2)]);
+  sys.push([dstr(base+21),'CB-'+(comp++),'Cobro curso primeros auxilios','123-A','980.00']);
+  // fuera de tolerancia
+  saldo-=640; bank.push([dstr(base+24),'Pago servicio internet','55870','640.00','',saldo.toFixed(2)]);
+  sys.push([dstr(base+16),'CB-'+(comp++),'Pago servicio internet','55870','-640.00']);
+  // solo banco: comisiones e intereses
+  saldo-=45; bank.push([dstr(base+29),'Comisión mantenimiento de cuenta','','45.00','',saldo.toFixed(2)]);
+  saldo+=12.3; bank.push([dstr(base+29),'Intereses ganados','','','12.30',saldo.toFixed(2)]);
+  // solo sistema: cheques en tránsito
+  sys.push([dstr(base+28),'CB-'+(comp++),'Cheque 004512 a proveedor','004512','-2300.00']);
+  sys.push([dstr(base+29),'CB-'+(comp++),'Depósito en tránsito','88410','1650.00']);
+  return {bank, sys};
+}
+
+/* ---------- Estado ---------- */
+const st = {
+  isExample:true,
+  banks:[], bankId:'', history:[],
+  files:{banco:null, sistema:null},
+  map:{banco:null, sistema:null},
+  B:[], S:[], groups:[], sugg:[], skipped:{banco:0,sistema:0},
+  sel:{B:new Set(), S:new Set()},
+  tab:'conciliados', page:0, filter:'', dirty:false, confirmRun:false,
+  db:null, downloads:null, sample:null
+};
+const PAGE=100;
+const $ = s=>document.querySelector(s);
+const esc = s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const nf = new Intl.NumberFormat('es-BO',{minimumFractionDigits:2,maximumFractionDigits:2});
+const money = c=>nf.format(c/100);
+const fdate = d=>{ if(d===null||d===undefined) return '—'; const t=new Date(d*DAY); return String(t.getUTCDate()).padStart(2,'0')+'/'+String(t.getUTCMonth()+1).padStart(2,'0')+'/'+t.getUTCFullYear(); };
+const MESES=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+const txById = id => st.idx ? st.idx.get(id) : undefined;
+
+/* ---------- Archivos ---------- */
+function setFile(side, name, wb, aoaOverride){
+  const f = {name, wb, sheet: wb ? wb.SheetNames[0] : null, aoa: aoaOverride||null};
+  st.files[side]=f; loadSheet(side);
+}
+function loadSheet(side){
+  const f=st.files[side];
+  f.offset=0;
+  if(f.wb){ const ws=f.wb.Sheets[f.sheet]; f.aoa = XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:'',blankrows:true}); if(ws['!ref']) f.offset=XLSX.utils.decode_range(ws['!ref']).s.r; }
+  f.headerRow = detectHeader(f.aoa);
+  const width = Math.max(...f.aoa.slice(f.headerRow, f.headerRow+30).map(r=>(r||[]).length), 1);
+  f.headers = headerNames(f.aoa[f.headerRow], width);
+  f.rows = f.aoa.slice(f.headerRow+1);
+  st.map[side] = savedMap(side, f.headers) || autoMap(f.headers);
+  renderFile(side);
+}
+function savedMap(side, headers){
+  const b = st.banks.find(x=>x.id===st.bankId);
+  const fm = b && (side==='banco'?b.formatoBanco:b.formatoSistema);
+  if(!fm) return null;
+  const ix = n => n ? headers.indexOf(n) : -1;
+  const m = {fecha:ix(fm.fecha), ref:ix(fm.ref), monto:ix(fm.monto), debito:ix(fm.debito), credito:ix(fm.credito), desc:ix(fm.desc), modo:fm.modo||'monto'};
+  return mapComplete(m) ? m : null;
+}
+function mapToNames(side){
+  const f=st.files[side], m=st.map[side]; const n=i=> i>=0 ? f.headers[i] : '';
+  return {fecha:n(m.fecha), ref:n(m.ref), monto:n(m.monto), debito:n(m.debito), credito:n(m.credito), desc:n(m.desc), modo:m.modo};
+}
+async function readFile(side, file){
+  try{
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf,{type:'array'});
+    if(!wb.SheetNames.length) throw new Error('vacío');
+    if(st.isExample){ st.isExample=false; $('#exampleBanner').hidden=true; const other = side==='banco'?'sistema':'banco'; st.files[other]=null; renderFile(other); $('#results').hidden=true; st.groups=[]; st.B=[]; st.S=[]; }
+    setFile(side, file.name, wb);
+    if(st.files.banco && st.files.sistema) run(true);
+  }catch(e){
+    $('#finfo-'+side).innerHTML='<span class="err">No se pudo leer este archivo. Sube un Excel (.xlsx o .xls) o un CSV con los movimientos.</span>';
+  }
+}
+const FIELD_LABEL={fecha:'Fecha',ref:'Referencia',monto:'Monto',debito:'Débito',credito:'Crédito',desc:'Descripción'};
+function renderFile(side){
+  const f=st.files[side];
+  const fn=$('#fname-'+side), fi=$('#finfo-'+side), mp=$('#map-'+side), wrap=$('#map-'+side+'-wrap');
+  if(!f){ fn.textContent = side==='banco'?'Arrastra aquí el Excel del banco o haz clic':'Arrastra aquí el Excel del sistema o haz clic'; fi.textContent='.xlsx, .xls o .csv'; mp.innerHTML=''; wrap.open=false; return; }
+  fn.textContent = f.name;
+  fi.textContent = f.rows.filter(r=>(r||[]).some(c=>c!==''&&c!=null)).length+' filas · encabezado en la fila '+((f.offset||0)+f.headerRow+1);
+  const m=st.map[side];
+  const opts = (sel)=>'<option value="-1">— ninguna —</option>'+f.headers.map((h,i)=>`<option value="${i}"${i===sel?' selected':''}>${esc(h)}</option>`).join('');
+  const sheetSel = f.wb && f.wb.SheetNames.length>1 ? `<div class="maprow"><label for="sheet-${side}">Hoja</label><select id="sheet-${side}" data-sheet="${side}">${f.wb.SheetNames.map(n=>`<option${n===f.sheet?' selected':''}>${esc(n)}</option>`).join('')}</select></div>` : '';
+  const row=(k)=>`<div class="maprow"><label for="m-${side}-${k}">${FIELD_LABEL[k]}</label><select id="m-${side}-${k}" data-side="${side}" data-field="${k}">${opts(m[k])}</select></div>`;
+  const prevRows = f.rows.slice(0,3);
+  const preview = `<div class="preview"><table><thead><tr>${f.headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${prevRows.map(r=>`<tr>${f.headers.map((_,i)=>`<td>${esc(r&&r[i]!=null?r[i]:'')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  mp.innerHTML = `<div style="display:flex;flex-direction:column;gap:8px;padding-top:10px">${sheetSel}${row('fecha')}${row('ref')}
+    <div class="maprow"><label for="modo-${side}">Montos en</label><select id="modo-${side}" data-modo="${side}"><option value="monto"${m.modo==='monto'?' selected':''}>una columna</option><option value="dc"${m.modo==='dc'?' selected':''}>débito y crédito</option></select></div>
+    ${m.modo==='dc'?row('debito')+row('credito'):row('monto')}${row('desc')}
+    ${mapComplete(m)?'':'<div class="err">Falta indicar la fecha, la referencia o el monto.</div>'}
+    <div class="eyebrow">Primeras filas</div>${preview}</div>`;
+  if(!mapComplete(m)) wrap.open=true;
+}
+
+/* ---------- Conciliar ---------- */
+function run(auto){
+  const msg=$('#runMsg');
+  if(!st.files.banco || !st.files.sistema){ msg.innerHTML='<span class="err">Sube los dos archivos para conciliar.</span>'; return; }
+  if(!mapComplete(st.map.banco)||!mapComplete(st.map.sistema)){ msg.innerHTML='<span class="err">Revisa las columnas: falta la fecha, la referencia o el monto.</span>'; return; }
+  if(st.dirty && !auto && !st.confirmRun){ st.confirmRun=true; msg.innerHTML='<span class="confirm">Se perderán los emparejamientos manuales. Pulsa Conciliar otra vez para confirmar.</span>'; return; }
+  st.confirmRun=false; st.dirty=false;
+  const tol = Math.max(0, Math.min(31, parseInt($('#tol').value,10)||0));
+  const order = $('#dateOrder').value;
+  const fb=st.files.banco, fs=st.files.sistema;
+  const rb = buildTx('banco', fb.rows, st.map.banco, fb.offset+fb.headerRow, order);
+  const rs = buildTx('sistema', fs.rows, st.map.sistema, fs.offset+fs.headerRow, order);
+  let B=rb.tx, S=rs.tx;
+  if(!st.mesManual){ const k=modeMonth(B.length?B:S); if(k){ st.mes=k; renderMesSelect(); } }
+  st.ignorados=0; st.filtroMes=null;
+  if($('#soloMes').checked && st.mes){
+    const [a,b]=monthRange(st.mes); st.filtroMes=[a,b];
+    const inB=B.filter(t=>t.d===null||(t.d>=a&&t.d<=b)), inS=S.filter(t=>t.d===null||(t.d>=a-tol&&t.d<=b+tol));
+    st.ignorados=(B.length-inB.length)+(S.length-inS.length); B=inB; S=inS;
+  }
+  st.B=B; st.S=S; st.skipped={banco:rb.skipped, sistema:rs.skipped};
+  st.groups = conciliar(st.B, st.S, tol);
+  if(st.filtroMes){ const [a,b]=st.filtroMes; const fuera=st.S.filter(t=>t.g===null&&t.d!==null&&(t.d<a||t.d>b)); st.ignorados+=fuera.length; st.S=st.S.filter(t=>!fuera.includes(t)); }
+  st.idx=new Map(st.B.concat(st.S).map(t=>[t.id,t]));
+  st.tol=tol;
+  st.sugg = localSuggestions(st.B, st.S, tol).map((s,i)=>({...s, id:'L'+i}));
+  st.sel.B.clear(); st.sel.S.clear();
+  msg.textContent = `${st.B.length} movimientos del banco y ${st.S.length} del sistema leídos`+((rb.skipped+rs.skipped)?` · ${rb.skipped+rs.skipped} filas sin monto omitidas (títulos, saldos o totales)`:'')+(st.ignorados?` · ${st.ignorados} movimientos fuera de ${monthLabel(st.mes)} ignorados`:'');
+  $('#results').hidden=false;
+  st.page=0;
+  saveFormat();
+  renderAll();
+}
+function pending(side){ return (side==='B'?st.B:st.S).filter(t=>t.g===null); }
+function sum(arr){ return arr.reduce((a,t)=>a+t.v,0); }
+function sumA(arr){ return arr.reduce((a,t)=>a+t.a,0); }
+function counts(){
+  const c={conc:0, concB:0, dif:0, difAmt:0, sb:pending('B').length, ss:pending('S').length};
+  for(const g of st.groups){ if(g.tipo==='diferencia'){ c.dif++; c.difAmt += sumA(g.b)-sumA(g.s); } else { c.conc++; c.concB+=g.b.length; } }
+  c.sbAmt=sum(pending('B')); c.ssAmt=sum(pending('S'));
+  const dsi=pending('B').filter(t=>etiqueta(t)); c.dsi=dsi.length; c.dsiAmt=sum(dsi);
+  c.sugg=liveSugg().length;
+  return c;
+}
+const ETQ_DSI='Depósito sin identificar';
+function etiqueta(t){ return (t.side==='banco' && t.g===null && t.v>0 && !/inter[eé]s/i.test(t.desc||'')) ? ETQ_DSI : ''; }
+function liveSugg(){ return st.sugg.filter(s=>s.b.concat(s.s).every(id=>{const t=txById(id); return t && t.g===null;})); }
+
+/* ---------- Render ---------- */
+const TABS=[['conciliados','Conciliados'],['diferencias','Diferencia de monto'],['soloBanco','Solo en banco'],['soloSistema','Solo en sistema'],['sugerencias','Sugerencias']];
+function renderAll(){ renderTiles(); renderStatement(); renderTabs(); renderTable(); renderSelBar(); }
+function renderTiles(){
+  const c=counts(); const pct = st.B.length? Math.round(c.concB*100/st.B.length):0;
+  const tile=(cls,tab,label,big,sub)=>`<button type="button" class="tile ${cls}${st.tab===tab?' sel':''}" data-tab="${tab}"><span class="eyebrow">${label}</span><span class="big num">${big}</span><span class="small muted">${sub}</span></button>`;
+  $('#tiles').innerHTML =
+    tile('t-ok','conciliados','Conciliados',c.conc,`${pct}% de los movimientos del banco`)+
+    tile('t-warn','diferencias','Diferencia de monto',c.dif,`Diferencia neta Bs ${money(c.difAmt)}`)+
+    tile('t-bad','soloBanco','Solo en banco',c.sb,`Bs ${money(c.sbAmt)}<br>${c.dsi} depósito${c.dsi===1?'':'s'} sin identificar · Bs ${money(c.dsiAmt)}`)+
+    tile('t-bad','soloSistema','Solo en sistema',c.ss,`Bs ${money(c.ssAmt)}`)+
+    tile('t-info','sugerencias','Sugerencias',c.sugg,'Posibles parejas por revisar');
+}
+function renderStatement(){
+  const tb=sum(st.B), ts=sum(st.S);
+  const range = arr=>{ const ds=arr.map(t=>t.d).filter(d=>d!==null); return ds.length? fdate(Math.min(...ds))+' – '+fdate(Math.max(...ds)) : '—'; };
+  $('#statement').innerHTML = `
+    <span class="eyebrow">Origen</span><span class="eyebrow">Período</span><span class="eyebrow">Movimiento neto (Bs)</span>
+    <span>Banco <span class="muted small">(${esc(st.files.banco?.name||'')})</span></span><span class="num">${range(st.B)}</span><span class="num">${money(tb)}</span>
+    <span>Sistema <span class="muted small">(${esc(st.files.sistema?.name||'')})</span></span><span class="num">${range(st.S)}</span><span class="num">${money(ts)}</span>
+    <span><b>Diferencia</b></span><span></span><span class="num"><b>${money(tb-ts)}</b></span>`;
+}
+function renderTabs(){
+  const c=counts(); const n={conciliados:c.conc,diferencias:c.dif,soloBanco:c.sb,soloSistema:c.ss,sugerencias:c.sugg};
+  $('#tabs').innerHTML = TABS.map(([k,l])=>`<button type="button" class="tab" role="tab" aria-selected="${st.tab===k}" data-tab="${k}">${l}<span class="cnt">${n[k]}</span></button>`).join('');
+}
+function matchesFilter(ts){
+  const q=st.filter.trim().toLowerCase(); if(!q) return true;
+  return ts.some(t=> (t.ref||'').toLowerCase().includes(q) || (t.desc||'').toLowerCase().includes(q) || money(t.v).includes(q) || String(t.a/100).includes(q) || fdate(t.d).includes(q) || etiqueta(t).toLowerCase().includes(q));
+}
+function pagerize(list){
+  const pages=Math.max(1,Math.ceil(list.length/PAGE)); if(st.page>=pages) st.page=pages-1;
+  $('#pager').innerHTML = pages>1 ? `<button class="btn sm" data-page="-1" type="button"${st.page===0?' disabled':''}>Anterior</button><span class="small muted">Página ${st.page+1} de ${pages}</span><button class="btn sm" data-page="1" type="button"${st.page>=pages-1?' disabled':''}>Siguiente</button>` : `<span class="small muted">${list.length} fila${list.length===1?'':'s'}</span>`;
+  return list.slice(st.page*PAGE, st.page*PAGE+PAGE);
+}
+const TIPO_PILL={exacto:['p-ok','Exacto'],agrupado:['p-info','Agrupado'],diferencia:['p-warn','Diferencia'],manual:['p-ok','Manual']};
+const ORIGEN={auto:'Automático',manual:'Manual',sugerencia:'Sugerencia',claude:'Sugerido por Claude'};
+const cellsMulti=(arr,fn)=>arr.length===1?fn(arr[0]):arr.map(fn).join('<br>');
+function renderTable(){
+  const body=$('#tabBody'); const tab=st.tab;
+  $('#filter').hidden = tab==='sugerencias';
+  if(tab==='conciliados'||tab==='diferencias'){
+    const isDif = tab==='diferencias';
+    const list = st.groups.filter(g=>(g.tipo==='diferencia')===isDif && matchesFilter(g.b.concat(g.s)));
+    const rows = pagerize(list);
+    if(!list.length){ body.innerHTML=`<div class="tablewrap"><div class="empty">${isDif?'No hay movimientos con diferencia de monto.':'Aún no hay movimientos conciliados.'}</div></div>`; return; }
+    body.innerHTML = `<div class="tablewrap"><table><thead><tr>
+      <th>Tipo</th><th>Fecha banco</th><th>Ref. banco</th><th class="r">Monto banco</th><th>Fecha sistema</th><th>Ref. sistema</th><th class="r">Monto sistema</th>
+      ${isDif?'<th class="r">Diferencia</th><th>Revisado</th><th>Comentario</th>':'<th>Origen</th>'}<th></th></tr></thead><tbody>
+      ${rows.map(g=>{ const [pc,pl]=TIPO_PILL[g.tipo]||TIPO_PILL.exacto; const dif=sumA(g.b)-sumA(g.s);
+        return `<tr><td><span class="pill ${pc}">${pl}${g.b.length+g.s.length>2?' '+g.b.length+':'+g.s.length:''}</span></td>
+        <td class="num">${cellsMulti(g.b,t=>fdate(t.d))}</td><td class="mono">${cellsMulti(g.b,t=>esc(t.ref)||'—')}</td><td class="num r">${cellsMulti(g.b,t=>money(t.v))}</td>
+        <td class="num">${cellsMulti(g.s,t=>fdate(t.d))}</td><td class="mono">${cellsMulti(g.s,t=>esc(t.ref)||'—')}</td><td class="num r">${cellsMulti(g.s,t=>money(t.v))}</td>
+        ${isDif?`<td class="num r"><b>${money(dif)}</b></td><td><input type="checkbox" data-grev="${g.id}" aria-label="Revisado"${g.revisado?' checked':''}></td><td><input type="text" class="cmt" data-gcmt="${g.id}" value="${esc(g.comentario)}" placeholder="Motivo de la diferencia"></td>`:`<td class="small muted">${ORIGEN[g.origen]||''}</td>`}
+        <td><button class="btn sm ghost" type="button" data-undo="${g.id}">Deshacer</button></td></tr>`;}).join('')}
+      </tbody></table></div>`;
+    return;
+  }
+  if(tab==='soloBanco'||tab==='soloSistema'){
+    const L = tab==='soloBanco'?'B':'S';
+    const list = pending(L).filter(t=>matchesFilter([t]));
+    const rows = pagerize(list);
+    if(!list.length){ body.innerHTML=`<div class="tablewrap"><div class="empty">No quedan movimientos pendientes ${L==='B'?'del banco':'del sistema'}.</div></div>`; return; }
+    body.innerHTML = `<p class="notice" style="margin:0 0 8px">Marca movimientos de ambas pestañas para emparejarlos a mano (por ejemplo, un depósito con varias facturas).${L==='B'?' <button class="btn sm" type="button" data-dsi="1">Ver solo depósitos sin identificar</button>':''}</p><div class="tablewrap"><table><thead><tr>
+      <th><span class="sr">Elegir</span></th><th>Fila</th><th>Fecha</th><th>Referencia</th><th class="r">Monto</th><th>Descripción</th><th>Observación</th><th>Revisado</th><th>Comentario</th></tr></thead><tbody>
+      ${rows.map(t=>`<tr class="${st.sel[L].has(t.id)?'picked':''}"><td><input type="checkbox" data-pick="${t.id}" aria-label="Elegir fila ${t.fila}"${st.sel[L].has(t.id)?' checked':''}></td>
+        <td class="num muted">${t.fila}</td><td class="num">${fdate(t.d)}</td><td class="mono">${esc(t.ref)||'—'}</td><td class="num r">${money(t.v)}</td><td class="desc">${esc(t.desc)}</td>
+        <td>${etiqueta(t)?`<span class="pill p-bad">${ETQ_DSI}</span> `:''}${t.nota?`<span class="pill p-warn">${esc(t.nota)}</span>`:''}</td>
+        <td><input type="checkbox" data-trev="${t.id}" aria-label="Revisado"${t.revisado?' checked':''}></td>
+        <td><input type="text" class="cmt" data-tcmt="${t.id}" value="${esc(t.comentario)}" placeholder="Ej.: comisión bancaria"></td></tr>`).join('')}
+      </tbody></table></div>`;
+    return;
+  }
+  // sugerencias
+  $('#pager').innerHTML='';
+  const list = liveSugg();
+  const item = id=>{ const t=txById(id); return `<span><b>${t.side==='banco'?'Banco':'Sistema'}</b> · <span class="num">${fdate(t.d)}</span> · <span class="mono">${esc(t.ref)||'sin ref.'}</span> · <span class="num">Bs ${money(t.v)}</span> <span class="muted">${esc(t.desc).slice(0,60)}</span></span>`; };
+  const claudeBox = st.sample ? `<div class="panel" style="padding:12px"><div class="controls"><button class="btn" type="button" id="askClaude">Pedir más sugerencias a Claude</button><span class="small muted" id="claudeMsg">Envía a Claude los movimientos pendientes (fecha, referencia, monto y descripción) para que proponga parejas. Tú confirmas cada una.</span></div></div>` : '';
+  body.innerHTML = `<div class="sugg">${claudeBox}${list.length? list.map(s=>{ const sb=s.b.map(txById), ss=s.s.map(txById); const eq=sumA(sb)===sumA(ss);
+    const col = s.tipo==='claude' ? 'var(--accent)' : 'var(--info)';
+    return `<div class="scard" style="--c:${col}"><div class="items"><span class="small"><b>${s.tipo==='claude'?'Claude':(s.tipo==='suma'?'La suma coincide':'Mismo monto')}</b>${s.confianza?` · confianza ${esc(s.confianza)}`:''} — ${esc(s.motivo)}${eq?'':` <span class="pill p-warn">Diferencia Bs ${money(sumA(sb)-sumA(ss))}</span>`}</span>${s.b.concat(s.s).map(item).join('')}</div>
+      <div class="acts"><button class="btn sm primary" type="button" data-accept="${s.id}">Aceptar</button><button class="btn sm" type="button" data-reject="${s.id}">Descartar</button></div></div>`; }).join('') : '<div class="tablewrap"><div class="empty">No hay sugerencias pendientes.</div></div>'}</div>`;
+}
+function renderSelBar(){
+  const nb=st.sel.B.size, ns=st.sel.S.size;
+  $('#selbar').hidden = !(nb||ns);
+  if(!(nb||ns)) return;
+  const b=[...st.sel.B].map(txById), s=[...st.sel.S].map(txById);
+  const d=sumA(b)-sumA(s);
+  $('#selInfo').innerHTML = `Banco: <b>${nb}</b> (<span class="num">Bs ${money(sumA(b))}</span>) · Sistema: <b>${ns}</b> (<span class="num">Bs ${money(sumA(s))}</span>) · ${d===0?'<span class="pill p-ok">Cuadra</span>':`<span class="pill p-warn">Diferencia Bs ${money(d)}</span>`}`;
+  $('#pairBtn').disabled = !(nb&&ns);
+}
+function makeGroup(bIds, sIds, origen){
+  const b=bIds.map(txById), s=sIds.map(txById);
+  if(!b.length||!s.length||b.concat(s).some(t=>!t||t.g!==null)) return false;
+  const tipo = sumA(b)===sumA(s) ? (b.length+s.length>2?'agrupado':'exacto') : 'diferencia';
+  const g={id:'M'+Date.now()+Math.floor(Math.random()*1000), tipo, origen, b, s, revisado:false, comentario:''};
+  b.concat(s).forEach(t=>{t.g=g.id; t.nota='';}); st.groups.push(g); st.dirty=true; return true;
+}
+
+/* ---------- Eventos ---------- */
+document.addEventListener('click', e=>{
+  const t=e.target.closest('[data-tab],[data-page],[data-undo],[data-accept],[data-reject],[data-dsi],#askClaude');
+  if(!t) return;
+  if(t.dataset.dsi){ $('#filter').value='sin identificar'; st.filter='sin identificar'; st.page=0; renderTable(); return; }
+  if(t.dataset.tab){ st.tab=t.dataset.tab; st.page=0; renderTiles(); renderTabs(); renderTable(); return; }
+  if(t.dataset.page){ st.page+= +t.dataset.page; renderTable(); return; }
+  if(t.dataset.undo){ const i=st.groups.findIndex(g=>g.id===t.dataset.undo); if(i>=0){ st.groups[i].b.concat(st.groups[i].s).forEach(x=>x.g=null); st.groups.splice(i,1); st.dirty=true; renderAll(); } return; }
+  if(t.dataset.accept){ const s=st.sugg.find(x=>x.id===t.dataset.accept); if(s && makeGroup(s.b,s.s, s.tipo==='claude'?'claude':'sugerencia')){ st.sugg=st.sugg.filter(x=>x!==s); renderAll(); } return; }
+  if(t.dataset.reject){ st.sugg=st.sugg.filter(x=>x.id!==t.dataset.reject); renderAll(); return; }
+  if(t.id==='askClaude'){ askClaude(t); }
+});
+document.addEventListener('change', e=>{
+  const t=e.target;
+  if(t.dataset.pick){ const L=t.dataset.pick[0]; t.checked?st.sel[L].add(t.dataset.pick):st.sel[L].delete(t.dataset.pick); t.closest('tr').classList.toggle('picked',t.checked); renderSelBar(); return; }
+  if(t.dataset.grev){ const g=st.groups.find(x=>x.id===t.dataset.grev); if(g) g.revisado=t.checked; return; }
+  if(t.dataset.trev){ const x=txById(t.dataset.trev); if(x) x.revisado=t.checked; return; }
+  if(t.dataset.field){ const side=t.dataset.side; st.map[side][t.dataset.field]=+t.value; renderFile(side); markStale(); return; }
+  if(t.dataset.modo){ const side=t.dataset.modo; st.map[side].modo=t.value; renderFile(side); markStale(); return; }
+  if(t.dataset.sheet){ const side=t.dataset.sheet; st.files[side].sheet=t.value; loadSheet(side); markStale(); return; }
+  if(t.id==='bankSel'){ onBankChange(); return; }
+  if(t.id==='tol'||t.id==='dateOrder'){ $('#tolTxt').textContent=Math.max(0,parseInt($('#tol').value,10)||0); markStale(); }
+});
+document.addEventListener('input', e=>{
+  const t=e.target;
+  if(t.dataset.gcmt){ const g=st.groups.find(x=>x.id===t.dataset.gcmt); if(g) g.comentario=t.value; return; }
+  if(t.dataset.tcmt){ const x=txById(t.dataset.tcmt); if(x) x.comentario=t.value; return; }
+  if(t.id==='filter'){ st.filter=t.value; st.page=0; renderTable(); }
+});
+function markStale(){ if(st.groups.length||st.B.length){ $('#runMsg').innerHTML='<span class="confirm">Cambiaste la configuración. Pulsa Conciliar para aplicarla.</span>'; } }
+$('#runBtn').addEventListener('click',()=>run(false));
+$('#pairBtn').addEventListener('click',()=>{ if(makeGroup([...st.sel.B],[...st.sel.S],'manual')){ st.sel.B.clear(); st.sel.S.clear(); renderAll(); } });
+$('#clearSelBtn').addEventListener('click',()=>{ st.sel.B.clear(); st.sel.S.clear(); renderTable(); renderSelBar(); });
+for(const side of ['banco','sistema']){
+  const drop=$('#drop-'+side), inp=$('#file-'+side);
+  inp.addEventListener('change',()=>{ if(inp.files[0]) readFile(side, inp.files[0]); inp.value=''; });
+  drop.addEventListener('dragover',e=>{e.preventDefault(); drop.classList.add('over');});
+  drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
+  drop.addEventListener('drop',e=>{e.preventDefault(); drop.classList.remove('over'); const f=e.dataTransfer.files[0]; if(f) readFile(side,f);});
+}
+
+/* ---------- Mes ---------- */
+const MESES_L=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+function monthLabel(k){ if(!k) return ''; const [y,m]=k.split('-'); const n=MESES_L[(+m)-1]; return n ? n[0].toUpperCase()+n.slice(1)+' '+y : k; }
+function monthKeyToday(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+function monthRange(k){ const [y,m]=k.split('-').map(Number); return [Math.floor(Date.UTC(y,m-1,1)/DAY), Math.floor(Date.UTC(y,m,1)/DAY)-1]; }
+function dayToMonth(d){ const t=new Date(d*DAY); return t.getUTCFullYear()+'-'+String(t.getUTCMonth()+1).padStart(2,'0'); }
+function modeMonth(arr){ const c={}; let best='',n=0; for(const t of arr){ if(t.d===null) continue; const k=dayToMonth(t.d); c[k]=(c[k]||0)+1; if(c[k]>n){n=c[k];best=k;} } return best; }
+function monthOptions(extra){
+  const now=new Date(); const out=new Set();
+  for(let i=-1;i<24;i++){ const d=new Date(now.getFullYear(), now.getMonth()-i, 1); out.add(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')); }
+  (extra||[]).forEach(k=>{ if(/^\d{4}-\d{2}$/.test(k||'')) out.add(k); });
+  return [...out].sort().reverse();
+}
+function renderMesSelect(){ const sel=$('#mes'); sel.innerHTML=monthOptions([st.mes]).map(k=>`<option value="${k}"${k===st.mes?' selected':''}>${monthLabel(k)}</option>`).join(''); }
+$('#mes').addEventListener('change',()=>{ st.mes=$('#mes').value; st.mesManual=true; st.histMes=st.mes; if(!$('#histPanel').hidden) renderHistory(); if($('#soloMes').checked) markStale(); });
+$('#soloMes').addEventListener('change',markStale);
+
+/* ---------- Nueva conciliación e historial ---------- */
+let confirmNew=false;
+function hasWork(){ return !st.isExample && (st.B.length>0 || !!st.files.banco || !!st.files.sistema); }
+$('#newBtn').addEventListener('click',()=>{
+  if(hasWork() && !confirmNew){ confirmNew=true; $('#newMsg').textContent='Se borrará la conciliación en pantalla. Pulsa otra vez “Nueva conciliación” para confirmar.'; return; }
+  confirmNew=false; $('#newMsg').textContent=''; st.mesManual=false;
+  st.isExample=false; $('#exampleBanner').hidden=true;
+  st.files={banco:null,sistema:null}; st.map={banco:null,sistema:null};
+  st.B=[]; st.S=[]; st.groups=[]; st.sugg=[]; st.idx=null; st.sel.B.clear(); st.sel.S.clear();
+  st.tab='conciliados'; st.page=0; st.filter=''; $('#filter').value=''; st.dirty=false; st.confirmRun=false;
+  renderFile('banco'); renderFile('sistema'); renderSelBar();
+  $('#results').hidden=true; $('#exportMsg').textContent='';
+  $('#runMsg').textContent='Nueva conciliación: elige el banco y sube los dos archivos.';
+  window.scrollTo({top:0});
+});
+function histMonth(h){
+  if(h.mes) return h.mes;
+  const m=String(h.periodo||'').toLowerCase().match(/^([a-z]{3})\w*\s+(\d{4})/); if(!m) return '';
+  const ix=MESES.indexOf(m[1]); return ix<0?'':m[2]+'-'+String(ix+1).padStart(2,'0');
+}
+function renderHistory(){
+  const sel=$('#histBank'); const cur=sel.value;
+  sel.innerHTML='<option value="">Todos</option>'+st.banks.map(b=>`<option value="${esc(b.id)}"${b.id===cur?' selected':''}>${esc(b.nombre)}</option>`).join('');
+  const ms=$('#histMes'); if(!st.histMes) st.histMes=st.mes||monthKeyToday();
+  ms.innerHTML='<option value="*">Todos los meses</option>'+monthOptions(st.history.map(histMonth)).map(k=>`<option value="${k}"${k===st.histMes?' selected':''}>${monthLabel(k)}</option>`).join('');
+  const body=$('#histBody'), stat=$('#histStatus');
+  if(!st.db){ stat.innerHTML=''; body.innerHTML='<div class="tablewrap"><div class="empty">El historial no está disponible en esta vista.</div></div>'; return; }
+  const mesSel=st.histMes;
+  // Estado de los bancos en el mes
+  if(mesSel!=='*' && st.banks.length){
+    const delMes=st.history.filter(h=>histMonth(h)===mesSel);
+    const last={}; for(const h of delMes){ if(!last[h.bancoId]||h.fecha>last[h.bancoId].fecha) last[h.bancoId]=h; }
+    const hechos=st.banks.filter(b=>last[b.id]).length;
+    stat.innerHTML=`<h3>${monthLabel(mesSel)}: ${hechos} de ${st.banks.length} bancos conciliados</h3><div class="banks">${st.banks.map(b=>{const h=last[b.id]; return `<div class="bankcard"><span><b>${esc(b.nombre)}</b><br><span class="small muted">${h?`${h.pct??'—'}% automático${h.dsi!=null?` · ${h.dsi} dep. sin identificar`:''}`:'Sin registro este mes'}</span></span>${h?'<span class="pill p-ok">Conciliado</span>':'<span class="pill p-bad">Pendiente</span>'}</div>`;}).join('')}</div>`;
+  } else stat.innerHTML = mesSel==='*' ? '' : '<p class="notice" style="margin:0">Registra los bancos con “+ Agregar banco” para ver qué falta conciliar cada mes.</p>';
+  const list=st.history.filter(h=>(!cur||h.bancoId===cur) && (mesSel==='*'||histMonth(h)===mesSel));
+  if(!list.length){ body.innerHTML='<div class="tablewrap"><div class="empty">No hay conciliaciones registradas'+(cur?' para este banco':'')+(mesSel!=='*'?' en '+monthLabel(mesSel):'')+'. Se registran al descargar el Excel.</div></div>'; return; }
+  const fd=iso=>{ try{ return new Date(iso).toLocaleString('es-BO',{dateStyle:'short',timeStyle:'short'}); }catch(e){ return iso; } };
+  const v=x=>x==null?'—':x;
+  body.innerHTML=`<div class="tablewrap"><table><thead><tr><th>Registrada</th><th>Banco</th><th>Mes</th><th class="r">Mov. banco</th><th class="r">Conciliados</th><th class="r">Automático</th><th class="r">Dif. monto</th><th class="r">Solo banco</th><th class="r">Dep. sin identificar</th><th class="r">Solo sistema</th></tr></thead><tbody>${list.map(h=>`<tr><td class="num">${esc(fd(h.fecha))}</td><td>${esc(h.banco)}</td><td>${esc(histMonth(h)?monthLabel(histMonth(h)):h.periodo)}</td><td class="num r">${v(h.movBanco)}</td><td class="num r">${v(h.conciliados)}</td><td class="r"><span class="pill ${h.pct>=90?'p-ok':'p-warn'}">${v(h.pct)}%</span></td><td class="num r">${v(h.diferencias)}</td><td class="num r">${v(h.soloBanco)}</td><td class="num r">${h.dsi==null?'—':h.dsi+(h.dsiMonto!=null?' · Bs '+nf.format(h.dsiMonto):'')}</td><td class="num r">${v(h.soloSistema)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function toggleHist(open){ $('#histPanel').hidden=!open; $('#histBtn').setAttribute('aria-expanded',String(open)); if(open){ renderHistory(); $('#histPanel').scrollIntoView({block:'start'}); } }
+$('#histBtn').addEventListener('click',()=>toggleHist($('#histPanel').hidden));
+$('#histClose').addEventListener('click',()=>toggleHist(false));
+$('#histBank').addEventListener('change',renderHistory);
+$('#histMes').addEventListener('change',()=>{ st.histMes=$('#histMes').value; renderHistory(); });
+
+/* ---------- Claude ---------- */
+async function askClaude(btn){
+  const msg=$('#claudeMsg');
+  const pb=pending('B').slice(0,70), ps=pending('S').slice(0,140);
+  if(!pb.length||!ps.length){ msg.textContent='Se necesitan movimientos pendientes en el banco y en el sistema.'; return; }
+  btn.disabled=true; msg.textContent='Claude está revisando '+(pb.length+ps.length)+' movimientos pendientes…';
+  const line=t=>`${t.id}|${fdate(t.d)}|${t.ref||'-'}|${(t.v/100).toFixed(2)}|${(t.desc||'').slice(0,70).replace(/\|/g,' ')}`;
+  const prompt = `Eres un asistente de conciliación bancaria. Abajo hay movimientos que no se pudieron emparejar automáticamente.
+Formato de cada línea: id|fecha (dd/mm/aaaa)|referencia|monto|descripción. En el banco, positivo = ingreso; en el sistema contable el signo puede seguir otra convención: compara montos en valor absoluto.
+Propón emparejamientos probables: 1 a 1, o 1 a varios (un depósito del banco que agrupa varias facturas del sistema, o al revés).
+Criterios: referencias parecidas (ceros a la izquierda, prefijos como TRF, guiones), montos iguales o cuya suma coincide exactamente, fechas cercanas (idealmente dentro de ${st.tol} días), descripciones relacionadas.
+No inventes ids. Cada id puede aparecer en una sola sugerencia. No propongas nada si no hay una razón concreta. Máximo 25 sugerencias.
+Responde SOLO con JSON: {"sugerencias":[{"banco":["B1"],"sistema":["S4","S9"],"motivo":"explicación breve en español","confianza":"alta|media|baja"}]}
+
+BANCO
+${pb.map(line).join('\n')}
+
+SISTEMA
+${ps.map(line).join('\n')}`;
+  try{
+    const res = await st.sample.json(prompt,{modelTier:'default'});
+    const arr = (res && Array.isArray(res.sugerencias)) ? res.sugerencias : [];
+    const seen=new Set(); let n=0;
+    for(const s of arr){
+      const b=(s.banco||[]).filter(id=>typeof id==='string'&&id[0]==='B'&&txById(id)&&txById(id).g===null);
+      const c=(s.sistema||[]).filter(id=>typeof id==='string'&&id[0]==='S'&&txById(id)&&txById(id).g===null);
+      if(!b.length||!c.length||b.concat(c).some(id=>seen.has(id))) continue;
+      b.concat(c).forEach(id=>seen.add(id));
+      st.sugg.push({id:'C'+Date.now()+'-'+n, tipo:'claude', b, s:c, motivo:String(s.motivo||'').slice(0,240), confianza:String(s.confianza||'').slice(0,10)}); n++;
+    }
+    renderAll();
+    const m=$('#claudeMsg'); if(m) m.textContent = n ? `Claude propuso ${n} pareja${n>1?'s':''}. Revisa y acepta solo las correctas.` : 'Claude no encontró parejas con suficiente fundamento.';
+  }catch(e){
+    const m=$('#claudeMsg'); const b=$('#askClaude'); if(b) b.disabled=false;
+    if(m) m.textContent = e&&e.code==='not_granted' ? 'No se dio permiso para consultar a Claude desde esta página.' : e&&e.code==='rate_limited' ? 'Demasiadas consultas seguidas. Espera un momento y vuelve a intentarlo.' : 'Claude no pudo responder esta vez. Inténtalo de nuevo en un momento.';
+  }
+}
+
+/* ---------- Exportar ---------- */
+function buildWorkbook(){
+  const wb=XLSX.utils.book_new(); const n=c=>Math.round(c)/100;
+  const bank=st.banks.find(b=>b.id===st.bankId);
+  const c=counts();
+  const resumen=[
+    ['Conciliación bancaria'],['Banco', st.isExample?'Banco de ejemplo (datos inventados)':(bank?.nombre||'Sin banco elegido')],
+    ['Archivo del banco', st.files.banco?.name||''],['Archivo del sistema', st.files.sistema?.name||''],
+    ['Mes conciliado', periodLabel()],['Solo movimientos del mes', st.filtroMes?'Sí':'No'],['Tolerancia de fecha (días)', st.tol],['Generado', new Date().toLocaleString('es-BO')],[],
+    ['Grupo','Cantidad','Monto (Bs)'],
+    ['Conciliados', c.conc, ''],['Diferencia de monto', c.dif, n(c.difAmt)],['Solo en banco', c.sb, n(c.sbAmt)],['   de ellos, depósitos sin identificar', c.dsi, n(c.dsiAmt)],['Solo en sistema', c.ss, n(c.ssAmt)],[],
+    ['Movimiento neto banco', '', n(sum(st.B))],['Movimiento neto sistema','', n(sum(st.S))],['Diferencia','', n(sum(st.B)-sum(st.S))]
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumen), 'Resumen');
+  const j=(arr,f)=>arr.map(f).join('; ');
+  const gRows=(isDif)=>[[ 'Tipo','Origen','Fecha banco','Ref. banco','Monto banco','Fecha sistema','Ref. sistema','Monto sistema','Diferencia','Filas banco','Filas sistema', ...(isDif?['Revisado','Comentario']:[]) ]]
+    .concat(st.groups.filter(g=>(g.tipo==='diferencia')===isDif).map(g=>[ (TIPO_PILL[g.tipo]||[])[1], ORIGEN[g.origen], j(g.b,t=>fdate(t.d)), j(g.b,t=>t.ref), n(sum(g.b)), j(g.s,t=>fdate(t.d)), j(g.s,t=>t.ref), n(sum(g.s)), n(sumA(g.b)-sumA(g.s)), j(g.b,t=>t.fila), j(g.s,t=>t.fila), ...(isDif?[g.revisado?'Sí':'No', g.comentario]:[]) ]));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(gRows(false)), 'Conciliados');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(gRows(true)), 'Diferencia de monto');
+  const pRows=L=>[['Fila','Fecha','Referencia','Monto','Descripción','Etiqueta','Observación','Revisado','Comentario']].concat(pending(L).map(t=>[t.fila, fdate(t.d), t.ref, n(t.v), t.desc, etiqueta(t), t.nota, t.revisado?'Sí':'No', t.comentario]));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(pRows('B')), 'Solo en banco');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(pRows('S')), 'Solo en sistema');
+  return wb;
+}
+function periodLabel(){ return st.mes ? monthLabel(st.mes) : ''; }
+$('#exportBtn').addEventListener('click', async ()=>{
+  const msg=$('#exportMsg');
+  if(!st.downloads){ msg.innerHTML='<span class="err">La descarga no está disponible en esta vista. Abre la herramienta en claude.ai.</span>'; return; }
+  const bank=st.banks.find(b=>b.id===st.bankId);
+  const name='Conciliacion_'+((st.isExample?'Ejemplo':(bank?.nombre||'Banco')).replace(/[^\w\-]+/g,'_'))+'_'+periodLabel().replace(' ','_')+'.xlsx';
+  try{
+    const out = XLSX.write(buildWorkbook(),{type:'array',bookType:'xlsx'});
+    await st.downloads.save({filename:name, data:new Blob([out])});
+    msg.textContent='Excel descargado.';
+    saveHistory();
+  }catch(e){
+    msg.innerHTML = e&&e.code==='declined' ? 'Descarga cancelada.' : '<span class="err">No se pudo descargar el archivo. Inténtalo de nuevo.</span>';
+  }
+});
+
+/* ---------- Bancos (db) ---------- */
+function renderBanks(){
+  renderHistory();
+  const sel=$('#bankSel');
+  const opts = ['<option value="">'+(st.banks.length?'Elige un banco':'Sin bancos guardados')+'</option>'].concat(st.banks.map(b=>`<option value="${esc(b.id)}"${b.id===st.bankId?' selected':''}>${esc(b.nombre)}</option>`));
+  sel.innerHTML=opts.join('');
+  const last={}; for(const h of st.history){ if(!last[h.bancoId] || h.fecha>last[h.bancoId].fecha) last[h.bancoId]=h; }
+  $('#banksList').innerHTML = st.banks.length ? st.banks.map(b=>{ const h=last[b.id];
+    return `<div class="bankcard"><span><b>${esc(b.nombre)}</b><br><span class="small muted">${h?`${esc(h.periodo)} · ${h.pct}% automático`:'Sin conciliaciones registradas'}</span></span>${h?'<span class="pill p-ok">Hecha</span>':'<span class="pill">Pendiente</span>'}</div>`;}).join('')
+    : `<div class="notice">${st.db?'Aún no hay bancos. Usa “+ Agregar banco” arriba para registrar los 16 bancos.':'En esta vista no se pueden guardar bancos.'}</div>`;
+}
+function onBankChange(){
+  st.bankId=$('#bankSel').value;
+  for(const side of ['banco','sistema']){ const f=st.files[side]; if(f && !st.isExample){ const m=savedMap(side,f.headers); if(m){ st.map[side]=m; renderFile(side); } } }
+  const b=st.banks.find(x=>x.id===st.bankId); if(b && b.tolerancia!=null){ $('#tol').value=b.tolerancia; $('#tolTxt').textContent=b.tolerancia; }
+}
+$('#addBankBtn').addEventListener('click',()=>{ $('#addBankForm').hidden=false; $('#addBankBtn').hidden=true; $('#newBankName').focus(); });
+$('#cancelBankBtn').addEventListener('click',()=>{ $('#addBankForm').hidden=true; $('#addBankBtn').hidden=false; });
+$('#saveBankBtn').addEventListener('click', async ()=>{
+  const name=$('#newBankName').value.trim(); if(!name) return;
+  if(st.db){
+    try{ const ref=await st.db.collection('bancos').add({nombre:name, creado:new Date().toISOString()}); st.bankId=ref.id; }
+    catch(e){ $('#runMsg').innerHTML='<span class="err">No se pudo guardar el banco. Puede que tu acceso sea solo de lectura.</span>'; return; }
+  } else { const id='local'+Date.now(); st.banks.push({id,nombre:name}); st.bankId=id; renderBanks(); }
+  $('#newBankName').value=''; $('#addBankForm').hidden=true; $('#addBankBtn').hidden=false;
+});
+async function saveFormat(){
+  if(!st.db || st.isExample || !st.bankId || st.bankId.startsWith('local')) return;
+  try{ await st.db.doc('bancos/'+st.bankId).update({formatoBanco:mapToNames('banco'), formatoSistema:mapToNames('sistema'), tolerancia:st.tol, actualizado:new Date().toISOString()}); }catch(e){}
+}
+async function saveHistory(){
+  if(!st.db || st.isExample || !st.bankId || st.bankId.startsWith('local')) return;
+  const c=counts(); const bank=st.banks.find(b=>b.id===st.bankId);
+  try{ await st.db.collection('conciliaciones').add({bancoId:st.bankId, banco:bank?.nombre||'', periodo:periodLabel(), mes:st.mes||'', fecha:new Date().toISOString(),
+    movBanco:st.B.length, movSistema:st.S.length, conciliados:c.conc, diferencias:c.dif, soloBanco:c.sb, soloSistema:c.ss,
+    dsi:c.dsi, dsiMonto:c.dsiAmt/100,
+    pct: st.B.length?Math.round(c.concB*100/st.B.length):0}); }catch(e){}
+}
+
+/* ---------- Modo independiente (fuera de claude.ai) ----------
+   Si la página se abre como archivo o en otro servidor, no existe window.claude.
+   Entonces los bancos y el historial se guardan en este navegador (localStorage)
+   y el Excel se descarga directamente. Las sugerencias de Claude no están disponibles. */
+function localClaude(){
+  const KEY='concilia.v1'; let mem={};
+  const load=()=>{ try{ return JSON.parse(localStorage.getItem(KEY)||'{}'); }catch(e){ return mem; } };
+  const save=d=>{ mem=d; try{ localStorage.setItem(KEY, JSON.stringify(d)); }catch(e){} };
+  const subs=[];
+  const snapOf=(col,opts)=>{ let rows=Object.entries((load()[col])||{}).map(([id,v])=>({id,v}));
+    if(opts.order){ const [f,dir]=opts.order; rows.sort((a,b)=>(a.v[f]>b.v[f]?1:a.v[f]<b.v[f]?-1:0)*(dir==='desc'?-1:1)); }
+    if(opts.limit) rows=rows.slice(0,opts.limit);
+    return {docs:rows.map(r=>({id:r.id,exists:true,data:()=>r.v})), size:rows.length, empty:!rows.length}; };
+  const notify=col=>subs.filter(x=>x.col===col).forEach(x=>x.cb(snapOf(col,x.opts)));
+  const query=(col,opts)=>({
+    orderBy:(f,dir)=>query(col,{...opts,order:[f,dir||'asc']}),
+    limit:n=>query(col,{...opts,limit:n}),
+    onSnapshot:(cb)=>{ const x={col,opts,cb}; subs.push(x); setTimeout(()=>cb(snapOf(col,opts)),0); return ()=>{ const i=subs.indexOf(x); if(i>=0) subs.splice(i,1); }; },
+    add:async data=>{ const d=load(); const id='id'+Date.now().toString(36)+Math.random().toString(36).slice(2,6); (d[col]=d[col]||{})[id]={...data}; save(d); notify(col); return {id}; }
+  });
+  const db={ collection:col=>query(col,{}),
+    doc:path=>{ const [col,id]=path.split('/'); return { update:async data=>{ const d=load(); if(!d[col]||!d[col][id]) throw {code:'invalid_argument'}; Object.assign(d[col][id],data); save(d); notify(col); } }; } };
+  const downloads={ save:async({filename,data})=>{ const url=URL.createObjectURL(data instanceof Blob?data:new Blob([data])); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),4000); return {status:'saved'}; } };
+  return { use: async name => name==='db'?db : name==='downloads'?downloads : null };
+}
+/* ---------- Inicio ---------- */
+function boot(){
+  st.mes=monthKeyToday(); renderMesSelect();
+  const ex=exampleData();
+  setFile('banco','extracto_banco_ejemplo.xlsx',null,ex.bank);
+  setFile('sistema','reporte_sistema_ejemplo.xlsx',null,ex.sys);
+  run(true);
+  renderBanks();
+}
+boot();
+(async()=>{
+  const cl=(window.claude && window.claude.use) ? window.claude : localClaude();
+  cl.use('downloads').then(d=>{ st.downloads=d; if(!d) $('#exportBtn').hidden=true; });
+  cl.use('sample').then(s=>{ st.sample=s; if(st.tab==='sugerencias') renderTable(); });
+  const db=await cl.use('db');
+  if(!db){ renderBanks(); return; }
+  st.db=db;
+  db.collection('bancos').onSnapshot(snap=>{ st.banks=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>String(a.nombre).localeCompare(String(b.nombre),'es')); renderBanks(); }, ()=>{});
+  db.collection('conciliaciones').orderBy('fecha','desc').limit(200).onSnapshot(snap=>{ st.history=snap.docs.map(d=>d.data()); renderBanks(); }, ()=>{});
+})();
+</script>
+</body>
+</html>
